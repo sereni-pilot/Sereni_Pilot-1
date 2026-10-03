@@ -626,7 +626,6 @@ function Register({onBack, onDone}) {
     }
     if(s===3){
       if(f.username.length<4) e.username="Minimum 4 characters";
-      if(DB.users.find(u=>u.username===f.username)) e.username="Username already taken";
       const pwdOk=/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};:.><\/?@]).{7,}$/.test(f.password);
       if(!pwdOk) e.password="Min 7 chars with uppercase, lowercase, number & special character (e.g. !@#$)";
       if(f.password!==f.confirm) e.confirm="Passwords do not match";
@@ -981,14 +980,14 @@ function DocManager({refresh}) {
     return e;
   };
 
-  const add=()=>{
+  const add=async()=>{
     const e=validate(); if(Object.keys(e).length){setErrors(e);return;}
-    DB.addDoc({id:`p${Date.now()}`,...f,available:true,addedAt:new Date().toISOString().split("T")[0]});
-    DB.activities.push({id:`a${Date.now()}`,type:"psychiatrist",user:"Admin",detail:`Added professional: ${f.name}`,time:new Date().toLocaleString(),icon:"🩺"});
+    await DB.addDoc({...f,available:true});
+    await sb.insert("activities",{type:"psychiatrist",actor:"Admin",detail:`Added professional: ${f.name}`,icon:"🩺"});
     setF({name:"",title:"",spec:"",phone:"",email:"",facility:""}); setErrors({}); setShowAdd(false); re();
   };
 
-  const docs=DB.psychiatrists;
+  const [docs,setDocs]=useState([]); useEffect(()=>{ DB.getDirectory().then(d=>setDocs(d||[])).catch(()=>{}); },[tick]);
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16,animation:"fadeUp 0.3s ease"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2214,7 +2213,7 @@ function Therapists({user, sw=false}) {
   const [sessionType, setSessionType] = useState({});
   const [mapFacility, setMapFacility] = useState(null);
   const [physBooked, setPhysBooked] = useState({});
-  const docs=DB.psychiatrists;
+  const [docs,setDocs]=useState([]); useEffect(()=>{ DB.getDirectory().then(d=>setDocs(d||[])).catch(()=>{}); },[tick]);
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16,animation:"fadeUp 0.3s ease"}}>
@@ -3130,15 +3129,14 @@ function MpesaPayment({user, sw=false}) {
 // PROGRESS REPORT (Doctor reviews patient reports)
 // ═══════════════════════════════════════════════════════════════════════════════
 function ProgressReport({patientId, patientName}) {
-  const logs = DB.getMoodLogs(patientId);
-  const user = DB.users.find(u=>u.id===patientId);
-  if(!user) return null;
+  const [logs, setLogs] = useState([]);
+  useEffect(()=>{ DB.getMoodLogs(patientId).then(d=>setLogs(d||[])).catch(()=>{}); },[patientId]);
 
-  const last7=[...logs].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,7).reverse();
-  const avg=logs.length>0?(logs.reduce((s,l)=>s+l.mood,0)/logs.length).toFixed(1):"—";
-  const avgEnergy=logs.length>0?(logs.reduce((s,l)=>s+l.energy,0)/logs.length).toFixed(1):"—";
-  const avgSleep=logs.length>0?(logs.reduce((s,l)=>s+l.sleep,0)/logs.length).toFixed(1):"—";
-  const topTags=[...logs.flatMap(l=>l.tags||[])].reduce((acc,t)=>{acc[t]=(acc[t]||0)+1;return acc;},{});
+  const last7=[...logs].sort((a,b)=>(b.log_date||b.date||"").localeCompare(a.log_date||a.date||"")).slice(0,7).reverse();
+  const avg=logs.length>0?(logs.reduce((s,l)=>s+(l.mood||0),0)/logs.length).toFixed(1):"—";
+  const avgEnergy=logs.length>0?(logs.reduce((s,l)=>s+(l.energy||0),0)/logs.length).toFixed(1):"—";
+  const avgSleep=logs.length>0?(logs.reduce((s,l)=>s+(l.sleep_hours||l.sleep||0),0)/logs.length).toFixed(1):"—";
+  const topTags=[...logs.flatMap(l=>Array.isArray(l.tags)?l.tags:[])].reduce((acc,t)=>{acc[t]=(acc[t]||0)+1;return acc;},{});
   const sortedTags=Object.entries(topTags).sort((a,b)=>b[1]-a[1]).slice(0,5);
 
   return (
@@ -3228,8 +3226,8 @@ function DocPatientsWithReport({doc}) {
   const patientNames=[...new Set(appts.map(a=>a.patientName))];
   const patients=patientNames.map(name=>{
     const pAppts=appts.filter(a=>a.patientName===name);
-    const user=DB.users.find(u=>u.fullName===name);
-    return {name,appts:pAppts,user,lastSeen:pAppts[pAppts.length-1]?.date||"",total:pAppts.length};
+    const user={id:pAppts[0]?.patient_id||pAppts[0]?.patientId||null, fullName:name};
+    return {name,appts:pAppts,user,lastSeen:pAppts[pAppts.length-1]?.appointment_date||pAppts[pAppts.length-1]?.date||"",total:pAppts.length};
   });
 
   if(viewing) return (
